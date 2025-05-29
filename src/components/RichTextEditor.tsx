@@ -15,6 +15,9 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [sentMessage, setSentMessage] = useState<string>('');
+  const [isBulletList, setIsBulletList] = useState(false);
+  const [isNumberedList, setIsNumberedList] = useState(false);
 
   useEffect(() => {
     if (editorRef.current) {
@@ -22,13 +25,24 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     }
   }, [initialContent]);
 
-  const execCommand = (command: string, value?: string) => {
-    document.execCommand(command, false, value);
-    onChange?.(editorRef.current?.innerHTML || '');
-  };
+  const insertSymbol = (symbol: string) => {
+    const selection = window.getSelection();
+    if (!selection || !editorRef.current) return;
+    const range = selection.getRangeAt(0);
+    const selectedText = range.toString();
 
-  const handleInput = () => {
-    onChange?.(editorRef.current?.innerHTML || '');
+    if (selectedText.length > 0) {
+      const newNode = document.createTextNode(`${symbol}${selectedText}${symbol}`);
+      range.deleteContents();
+      range.insertNode(newNode);
+    } else {
+      const marker = document.createTextNode(symbol);
+      range.insertNode(marker);
+      range.setStartAfter(marker);
+      range.setEndAfter(marker);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
   };
 
   const insertEmojiAtCursor = (emoji: string) => {
