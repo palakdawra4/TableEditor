@@ -13,8 +13,8 @@ const App: React.FC = () => {
         onChange={setContent}
       />
 
-      <h2 className="mt-6 font-semibold">Output HTML:</h2>
-      <pre className="bg-gray-100 p-4 mt-2 whitespace-pre-wrap">{content}</pre>
+      {/* <h2 className="mt-6 font-semibold">Output HTML:</h2>
+      <pre className="bg-gray-100 p-4 mt-2 whitespace-pre-wrap">{content}</pre> */}
     </div>
   );
 };
