@@ -25,25 +25,72 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     }
   }, [initialContent]);
 
+  // Insert markdown symbols per line preserving line breaks
   const insertSymbol = (symbol: string) => {
-  const selection = window.getSelection();
-  if (!selection || !editorRef.current) return;
-  const range = selection.getRangeAt(0);
-  const selectedText = range.toString();
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !editorRef.current) return;
 
-  if (selectedText.length > 0) {
-    const newNode = document.createTextNode(`${symbol}${selectedText}${symbol}`);
+    const range = selection.getRangeAt(0);
+    if (range.collapsed) {
+      // No selection: insert symbol and place cursor in middle
+      const textNode = document.createTextNode(symbol + symbol);
+      range.insertNode(textNode);
+
+      // Move cursor between the two symbols
+      const newRange = document.createRange();
+      newRange.setStart(textNode, symbol.length);
+      newRange.collapse(true);
+
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+      return;
+    }
+
+    // If selection exists, wrap each line in symbol
+    const selectedContent = range.cloneContents();
+    const div = document.createElement('div');
+    div.appendChild(selectedContent);
+
+    // Extract lines and wrap each line individually
+    const lines: string[] = [];
+
+    div.childNodes.forEach((node) => {
+      let text = '';
+      if (node.nodeType === Node.TEXT_NODE) {
+        text = node.textContent || '';
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        text = (node as HTMLElement).innerText;
+      }
+      if (text.trim().length > 0) {
+        lines.push(`${symbol}${text}${symbol}`);
+      } else {
+        lines.push(text);
+      }
+    });
+
+    // Build new HTML with <div> wrapping each line for line breaks
+    const newHTML = lines.map(line => `<div>${line}</div>`).join('');
+
+    // Replace the selected content with new HTML
     range.deleteContents();
-    range.insertNode(newNode);
-  } else {
-    const marker = document.createTextNode(symbol);
-    range.insertNode(marker);
-    range.setStartAfter(marker);
-    range.setEndAfter(marker);
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = newHTML;
+
+    const frag = document.createDocumentFragment();
+    while (tempDiv.firstChild) {
+      frag.appendChild(tempDiv.firstChild);
+    }
+
+    range.insertNode(frag);
+
+    // Move cursor to end of inserted content
     selection.removeAllRanges();
-    selection.addRange(range);
-  }
-};
+    const newRange = document.createRange();
+    newRange.selectNodeContents(editorRef.current);
+    newRange.collapse(false);
+    selection.addRange(newRange);
+  };
 
   const insertEmojiAtCursor = (emoji: string) => {
     const selection = window.getSelection();
@@ -76,50 +123,48 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     });
   };
 
-  // ✅ Parses markdown-like symbols to HTML tags
- const parseMarkdownInHTML = (htmlString: string): string => {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(htmlString, 'text/html');
+  // Parse markdown-like syntax to HTML including underline
+  const parseMarkdownInHTML = (htmlString: string): string => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlString, 'text/html');
 
-  // Helper function to recursively process nodes and replace markdown in text nodes
-  const walkNodes = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      let text = node.textContent || '';
-      // Replace markdown symbols in text nodes only
-      text = text
-        .replace(/\*([^*]+)\*/g, '<b>$1</b>')  // *bold*
-        .replace(/_([^_]+)_/g, '<i>$1</i>')    // _italic_
-        .replace(/~([^~]+)~/g, '<s>$1</s>');   // ~strike~
-      
-      // Create a temporary container to parse replaced html tags in string
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = text;
+    const walkNodes = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        let text = node.textContent || '';
 
-      // Replace the original text node with parsed HTML nodes
-      if (tempDiv.childNodes.length === 1 && tempDiv.childNodes[0].nodeType === Node.TEXT_NODE) {
-        node.textContent = tempDiv.textContent;
-      } else {
-        const parent = node.parentNode;
-        if (!parent) return;
-        while (tempDiv.firstChild) {
-          parent.insertBefore(tempDiv.firstChild, node);
+        // Replace underline first (double underscore)
+        text = text.replace(/__(.+?)__/g, '<u>$1</u>');
+        // Then bold (double star or single star)
+        text = text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+        text = text.replace(/\*(.+?)\*/g, '<b>$1</b>');
+        // Italic (underscore)
+        text = text.replace(/_(.+?)_/g, '<i>$1</i>');
+        // Strike
+        text = text.replace(/~(.+?)~/g, '<s>$1</s>');
+
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = text;
+
+        if (tempDiv.childNodes.length === 1 && tempDiv.childNodes[0].nodeType === Node.TEXT_NODE) {
+          node.textContent = tempDiv.textContent;
+        } else {
+          const parent = node.parentNode;
+          if (!parent) return;
+          while (tempDiv.firstChild) {
+            parent.insertBefore(tempDiv.firstChild, node);
+          }
+          parent.removeChild(node);
         }
-        parent.removeChild(node);
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        node.childNodes.forEach(child => walkNodes(child));
       }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      node.childNodes.forEach(child => walkNodes(child));
-    }
+    };
+
+    walkNodes(doc.body);
+    return doc.body.innerHTML;
   };
 
-  walkNodes(doc.body);
-
-  // Return the innerHTML preserving all tags, lists, and line breaks
-  return doc.body.innerHTML;
-};
-
-
-
-  // ✅ Force paste as plain text (to preserve markdown symbols)
+  // Paste as plain text to preserve markdown symbols
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
@@ -128,7 +173,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter') {
-      // Browser handles Enter inside lists
+      // Browser handles Enter inside lists normally
     }
   };
 
@@ -136,7 +181,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     if (!editorRef.current) return;
     let rawHTML = editorRef.current.innerHTML;
 
-    // Clean up unwanted characters
+    // Clean unwanted unicode chars
     rawHTML = rawHTML
       .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'")
       .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
@@ -158,6 +203,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         <button onClick={() => insertSymbol('*')}><b>B</b></button>
         <button onClick={() => insertSymbol('_')}><i>I</i></button>
         <button onClick={() => insertSymbol('~')}><s>S</s></button>
+        <button onClick={() => insertSymbol('__')}>U</button> {/* Underline */}
 
         <button
           onClick={toggleBulletList}
@@ -196,7 +242,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         contentEditable
         suppressContentEditableWarning
         onKeyDown={handleKeyDown}
-        onPaste={handlePaste} // ✅ PASTE HANDLING ADDED HERE
+        onPaste={handlePaste}
         className="p-4 min-h-[150px] border rounded outline-none focus:outline-none whitespace-pre-wrap"
         data-placeholder={placeholder}
         style={{ whiteSpace: 'pre-wrap', cursor: 'text' }}
@@ -211,14 +257,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       </button>
 
       {sentMessage && (
-        <div>
         <div className="border-t pt-4">
           <h2 className="font-semibold mb-2">Sent Message:</h2>
           <div
-            className="p-4 border rounded bg-gray-50"
+            className="p-4 border rounded bg-gray-50 whitespace-pre-wrap"
             dangerouslySetInnerHTML={{ __html: sentMessage }}
           />
-        </div>
         </div>
       )}
     </div>
